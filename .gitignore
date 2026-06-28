@@ -1,0 +1,14 @@
+# Build output
+/build/
+/cmake-build-*/
+
+# Local-only reference material (not shipped)
+/example-bass-synth/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.user
+
+# OS
+.DS_Store
