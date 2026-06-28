@@ -1,0 +1,106 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege by default; only the release job is granted write access.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Desktop builds (downloadable executables): Linux, Windows, macOS.
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux,   os: ubuntu-22.04 }
+          - { name: windows, os: windows-latest }
+          - { name: macos,   os: macos-latest }
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libjack-jackd2-dev \
+            libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev \
+            libfreetype6-dev libfontconfig1-dev libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        shell: bash
+        run: |
+          cd build/BassSeq_artefacts/Release
+          cmake -E tar cfv "${{ github.workspace }}/BASS-SEQ-${{ matrix.name }}.zip" --format=zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: BASS-SEQ-${{ matrix.name }}
+          path: BASS-SEQ-${{ matrix.name }}.zip
+
+  # ---------------------------------------------------------------------------
+  # iOS: compile-check only (simulator, unsigned). Distributing an installable
+  # iOS build needs Apple code-signing + TestFlight/App Store — not done here.
+  # ---------------------------------------------------------------------------
+  ios:
+    name: ios (simulator, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Configure (iOS Simulator)
+        run: >
+          cmake -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+          -DCMAKE_OSX_SYSROOT=iphonesimulator
+      - name: Build (unsigned)
+        run: >
+          cmake --build build-ios --config Release --parallel --
+          -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+  # ---------------------------------------------------------------------------
+  # On a version tag (vX.Y.Z): collect the desktop builds into a GitHub Release,
+  # with SHA-256 checksums so downloads can be verified.
+  # ---------------------------------------------------------------------------
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          find . -name '*.zip' -exec sha256sum {} \; | sed 's#\./##' > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            artifacts/**/*.zip
+            SHA256SUMS.txt
+          generate_release_notes: true

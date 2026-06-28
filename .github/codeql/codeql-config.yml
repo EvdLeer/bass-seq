@@ -1,0 +1,3 @@
+# Focus CodeQL on our own code; the vendored Open303/rosic DSP is third-party.
+paths-ignore:
+  - source/dsp/open303
